@@ -21,7 +21,7 @@ HTML_SITE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OfficeIA Pro - Assistente Executivo</title>
+    <title>OfficeIA Pro - Inteligência de Escritório</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; }
         .container { background: white; max-width: 650px; width: 100%; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
@@ -63,7 +63,7 @@ HTML_SITE = """<!DOCTYPE html>
         </div>
     </div>
 
-    <button onclick="processar()">✨ Gerar Relatório Oficial</button>
+    <button id="btnGerar" onclick="processar()">✨ Gerar Relatório Oficial</button>
 
     <div id="resultadoBox">
         <h3>📄 Relatório Gerado</h3>
@@ -84,16 +84,20 @@ HTML_SITE = """<!DOCTYPE html>
         if (!fileInput.files.length) return alert("Selecione uma planilha primeiro!");
 
         const formData = new FormData();
-        formData.append("arquivo", fileInput.files);
+        formData.append("arquivo", fileInput.files.item(0));
         formData.append("comando", comando);
 
-        const btn = document.querySelector("button");
+        const btn = document.getElementById("btnGerar");
         btn.innerText = "⏳ Analisando dados...";
         btn.disabled = true;
 
         try {
             const req = await fetch("/api/analisar-planilha", { method: "POST", body: formData });
             const res = await req.json();
+
+            if (!req.ok) {
+                throw new Error(JSON.stringify(res));
+            }
 
             document.getElementById("textoRelatorio").innerText = res.relatorio;
             const img = document.getElementById("imgGrafico");
@@ -106,7 +110,7 @@ HTML_SITE = """<!DOCTYPE html>
             document.getElementById("blocoAssinatura").innerHTML = `<strong>${respNome}</strong><br>${respCargo}`;
             document.getElementById("resultadoBox").style.display = "block";
         } catch (e) {
-            alert("Erro ao processar planilha. Verifique o formato do arquivo.");
+            alert("Erro ao processar: " + e.message);
         } finally {
             btn.innerText = "✨ Gerar Relatório Oficial";
             btn.disabled = false;
@@ -122,59 +126,61 @@ async def pagina_inicial():
     return HTML_SITE
 
 def analisar_financas(df: pd.DataFrame, comando: str):
-    col_texto = df.select_dtypes(include=["object"]).columns
-    col_valor = df.select_dtypes(include=[np.number]).columns
+    col_texto = df.select_dtypes(include=["object"]).columns.tolist()
+    col_valor = df.select_dtypes(include=[np.number]).columns.tolist()
 
-    if len(col_texto) == 0 or len(col_valor) == 0:
+    if not col_texto or not col_valor:
         return df.describe().to_string(), None
 
-    cat_col = col_texto
-    val_col = col_valor
+    cat_col = col_texto.pop(0)
+    val_col = col_valor.pop(0)
 
     entradas_kw = ["receita", "venda", "faturamento", "ganho", "a receber", "entrada"]
     saidas_kw = ["despesa", "custo", "folha", "imposto", "a pagar", "gasto", "saída"]
     ignorar_kw = ["lucro", "saldo", "total", "subtotal", "resultado", "balanço"]
 
     entradas, saidas = 0.0, 0.0
-    itens_validos = []
+    nomes_grafico = []
+    valores_grafico = []
+    cores_grafico = []
 
     for _, row in df.iterrows():
         nome = str(row[cat_col]).strip()
         nome_low = nome.lower()
         try:
             val = float(row[val_col])
-        except ValueError:
+        except (ValueError, TypeError):
             continue
 
         if any(k in nome_low for k in ignorar_kw):
             continue
         elif any(k in nome_low for k in entradas_kw):
             entradas += val
-            itens_validos.append((nome, val))
+            nomes_grafico.append(nome)
+            valores_grafico.append(val)
+            cores_grafico.append("#107c41")
         elif any(k in nome_low for k in saidas_kw):
             saidas += val
-            itens_validos.append((nome, -val))
+            nomes_grafico.append(nome)
+            valores_grafico.append(val)
+            cores_grafico.append("#d13438")
 
     balanco = entradas - saidas
 
     relatorio = (
-        f"RELATÓRIO EXECUTIVO DE ANÁLISE FINANCEIRA\\n"
-        f"--------------------------------------------------\\n"
-        f"• Total de Entradas Operacionais: R$ {entradas:,.2f}\\n"
-        f"• Total de Saídas Operacionais: R$ {saidas:,.2f}\\n"
-        f"• Balanço Líquido Apurado: R$ {balanco:,.2f}\\n"
-        f"--------------------------------------------------\\n"
-        f"Solicitação processada: {comando}\\n"
+        f"RELATÓRIO EXECUTIVO DE ANÁLISE FINANCEIRA\n"
+        f"--------------------------------------------------\n"
+        f"• Total de Entradas Operacionais: R$ {entradas:,.2f}\n"
+        f"• Total de Saídas Operacionais: R$ {saidas:,.2f}\n"
+        f"• Balanço Líquido Apurado: R$ {balanco:,.2f}\n"
+        f"--------------------------------------------------\n"
+        f"Solicitação processada: {comando}\n"
     )
 
     img_base64 = None
-    if itens_validos:
+    if nomes_grafico:
         fig, ax = plt.subplots(figsize=(6, 3))
-        nomes = [x for x in itens_validos]
-        valores = [abs(x) for x in itens_validos]
-        cores = ["#107c41" if x > 0 else "#d13438" for x in itens_validos]
-        
-        ax.barh(nomes, valores, color=cores)
+        ax.barh(nomes_grafico, valores_grafico, color=cores_grafico)
         ax.set_title("Composição Financeira (Verde: Entrada | Vermelho: Saída)")
         plt.tight_layout()
         
@@ -189,16 +195,6 @@ def analisar_financas(df: pd.DataFrame, comando: str):
 @app.post("/api/analisar-planilha")
 async def endpoint_planilha(comando: str = Form(...), arquivo: UploadFile = File(...)):
     conteudo = await arquivo.read()
-    df = pd.read_csv(io.BytesIO(conteudo)) if arquivo.filename.endswith(".csv") else pd.read_excel(io.BytesIO(conteudo))
+    df = pd.read_csv(io.BytesIO(conteudo)) if arquivo.filename.lower().endswith(".csv") else pd.read_excel(io.BytesIO(conteudo))
     texto, grafico = analisar_financas(df, comando)
     return {"relatorio": texto, "grafico_base64": grafico}
-
-@app.post("/api/analisar-dados-diretos")
-async def endpoint_direto(payload: dict):
-    dados = payload.get("dados", [])
-    comando = payload.get("comando", "Análise Geral")
-    df = pd.DataFrame(dados)
-    texto, grafico = analisar_financas(df, comando)
-    return {"relatorio": texto, "grafico_base64": grafico}
-
-
