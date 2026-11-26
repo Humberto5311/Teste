@@ -1,7 +1,12 @@
 streamlit
 pandas
 openpyxl
+xlrd
+pyxlsb
+odfpy
 scikit-learn
 numpy
 python-docx
+pypdf
 matplotlib
+
