@@ -187,9 +187,11 @@ def analisar_hibrido(df: pd.DataFrame, comando: str):
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if api_key:
         try:
-            cliente = OpenAI(
+                        cliente = OpenAI(
                 base_url="https://openrouter.ai",
                 api_key=api_key,
+            )
+
             )
             prompt = f"""
             Você é um consultor financeiro executivo brasileiro.
