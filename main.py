@@ -200,7 +200,7 @@ async def endpoint_direto(payload: dict):
     df = pd.DataFrame(dados)
     texto, grafico = analisar_financas(df, comando)
     return {"relatorio": texto, "grafico_base64": grafico}
-"""
+
 
 3. Clique em **Commit changes** no GitHub.
 4. O Render vai atualizar sozinho em 1 minuto. Depois disso, basta atualizar a aba **`https://onrender.com`** que o seu site visual completo vai abrir direto nela (e também no `manifest.xml` do Office se você apontar para `https://onrender.com`).
