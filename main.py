@@ -202,9 +202,3 @@ async def endpoint_direto(payload: dict):
     return {"relatorio": texto, "grafico_base64": grafico}
 
 
-3. Clique em **Commit changes** no GitHub.
-4. O Render vai atualizar sozinho em 1 minuto. Depois disso, basta atualizar a aba **`https://onrender.com`** que o seu site visual completo vai abrir direto nela (e também no `manifest.xml` do Office se você apontar para `https://onrender.com`).
-
-<FollowUp>
-Atualizou o **`main.py`** no GitHub e recarregou **`https://onrender.com`** para ver a tela visual do seu site abrir?
-</FollowUp>
