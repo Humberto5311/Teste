@@ -1,3 +1,4 @@
+import os
 import io
 import base64
 import numpy as np
@@ -6,6 +7,7 @@ import matplotlib.pyplot as plt
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from google import genai
 
 app = FastAPI(title="OfficeIA Pro")
 
@@ -16,6 +18,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def moeda_br(valor: float) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 HTML_SITE = """<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -24,7 +29,7 @@ HTML_SITE = """<!DOCTYPE html>
     <title>OfficeIA Pro - Inteligência de Escritório</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; }
-        .container { background: white; max-width: 650px; width: 100%; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        .container { background: white; max-width: 680px; width: 100%; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
         h1 { color: #107c41; margin-top: 0; font-size: 24px; }
         p.sub { color: #605e5c; font-size: 14px; margin-bottom: 20px; }
         label { font-weight: 600; display: block; margin-top: 15px; color: #323130; font-size: 14px; }
@@ -34,7 +39,7 @@ HTML_SITE = """<!DOCTYPE html>
         button { width: 100%; padding: 14px; margin-top: 22px; background: #107c41; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
         button:hover { background: #0b5a2f; }
         #resultadoBox { margin-top: 25px; display: none; border-top: 2px solid #edebe9; padding-top: 20px; }
-        pre { background: #faf9f8; padding: 15px; border-radius: 6px; border: 1px solid #edebe9; white-space: pre-wrap; font-family: 'Consolas', monospace; font-size: 13px; }
+        .relatorio-texto { background: #faf9f8; padding: 18px; border-radius: 6px; border: 1px solid #edebe9; white-space: pre-wrap; font-family: 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; color: #201f1e; }
         img { max-width: 100%; border-radius: 6px; margin-top: 15px; border: 1px solid #edebe9; }
         .assinatura { margin-top: 25px; padding-top: 10px; border-top: 1px solid #323130; width: 260px; font-size: 13px; }
         .btn-print { background: #0078d4; margin-top: 12px; }
@@ -44,13 +49,13 @@ HTML_SITE = """<!DOCTYPE html>
 <body>
 <div class="container">
     <h1>📊 OfficeIA Pro — Inteligência de Escritório</h1>
-    <p class="sub">Envie sua planilha (Excel ou CSV), dê a ordem e gere o relatório financeiro assinado.</p>
+    <p class="sub">Envie sua planilha, faça qualquer pergunta avançada e gere o relatório assinado.</p>
 
     <label>1. Selecione a Planilha (.xlsx, .xls, .csv)</label>
     <input type="file" id="arquivo" accept=".xlsx,.xls,.csv">
 
-    <label>2. O que você deseja analisar?</label>
-    <textarea id="comando" rows="3" placeholder="Ex: Calcule o balanço financeiro, entradas, saídas e gere o gráfico..."></textarea>
+    <label>2. O que você deseja saber ou analisar?</label>
+    <textarea id="comando" rows="3" placeholder="Ex: Qual o maior gasto? Calcule o lucro líquido e me dê sugestões de economia..."></textarea>
 
     <div class="row">
         <div>
@@ -66,8 +71,8 @@ HTML_SITE = """<!DOCTYPE html>
     <button id="btnGerar" onclick="processar()">✨ Gerar Relatório Oficial</button>
 
     <div id="resultadoBox">
-        <h3>📄 Relatório Gerado</h3>
-        <pre id="textoRelatorio"></pre>
+        <h3>📄 Relatório Executivo</h3>
+        <div class="relatorio-texto" id="textoRelatorio"></div>
         <img id="imgGrafico" style="display:none;">
         <div class="assinatura" id="blocoAssinatura"></div>
         <button class="btn-print" onclick="window.print()">🖨️ Salvar em PDF / Imprimir</button>
@@ -77,7 +82,7 @@ HTML_SITE = """<!DOCTYPE html>
 <script>
     async function processar() {
         const fileInput = document.getElementById("arquivo");
-        const comando = document.getElementById("comando").value || "Análise Financeira Completa";
+        const comando = document.getElementById("comando").value || "Faça um balanço financeiro completo.";
         const respNome = document.getElementById("responsavel").value || "Responsável Técnico";
         const respCargo = document.getElementById("cargo").value || "Setor Administrativo";
 
@@ -88,16 +93,14 @@ HTML_SITE = """<!DOCTYPE html>
         formData.append("comando", comando);
 
         const btn = document.getElementById("btnGerar");
-        btn.innerText = "⏳ Analisando dados...";
+        btn.innerText = "⏳ IA analisando planilha...";
         btn.disabled = true;
 
         try {
             const req = await fetch("/api/analisar-planilha", { method: "POST", body: formData });
             const res = await req.json();
 
-            if (!req.ok) {
-                throw new Error(JSON.stringify(res));
-            }
+            if (!req.ok) throw new Error(JSON.stringify(res));
 
             document.getElementById("textoRelatorio").innerText = res.relatorio;
             const img = document.getElementById("imgGrafico");
@@ -125,76 +128,99 @@ HTML_SITE = """<!DOCTYPE html>
 async def pagina_inicial():
     return HTML_SITE
 
-def analisar_financas(df: pd.DataFrame, comando: str):
+def analisar_hibrido(df: pd.DataFrame, comando: str):
     col_texto = df.select_dtypes(include=["object"]).columns.tolist()
     col_valor = df.select_dtypes(include=[np.number]).columns.tolist()
 
-    if not col_texto or not col_valor:
-        return df.describe().to_string(), None
-
-    cat_col = col_texto.pop(0)
-    val_col = col_valor.pop(0)
-
-    entradas_kw = ["receita", "venda", "faturamento", "ganho", "a receber", "entrada"]
-    saidas_kw = ["despesa", "custo", "folha", "imposto", "a pagar", "gasto", "saída"]
-    ignorar_kw = ["lucro", "saldo", "total", "subtotal", "resultado", "balanço"]
-
     entradas, saidas = 0.0, 0.0
-    nomes_grafico = []
-    valores_grafico = []
-    cores_grafico = []
+    nomes_grafico, valores_grafico, cores_grafico = [], [], []
 
-    for _, row in df.iterrows():
-        nome = str(row[cat_col]).strip()
-        nome_low = nome.lower()
-        try:
-            val = float(row[val_col])
-        except (ValueError, TypeError):
-            continue
+    if col_texto and col_valor:
+        cat_col = col_texto.pop(0)
+        val_col = col_valor.pop(0)
 
-        if any(k in nome_low for k in ignorar_kw):
-            continue
-        elif any(k in nome_low for k in entradas_kw):
-            entradas += val
-            nomes_grafico.append(nome)
-            valores_grafico.append(val)
-            cores_grafico.append("#107c41")
-        elif any(k in nome_low for k in saidas_kw):
-            saidas += val
-            nomes_grafico.append(nome)
-            valores_grafico.append(val)
-            cores_grafico.append("#d13438")
+        entradas_kw = ["receita", "venda", "faturamento", "ganho", "a receber", "entrada"]
+        saidas_kw = ["despesa", "custo", "folha", "imposto", "a pagar", "gasto", "saída"]
+        ignorar_kw = ["lucro", "saldo", "total", "subtotal", "resultado", "balanço"]
+
+        for _, row in df.iterrows():
+            nome = str(row[cat_col]).strip()
+            nome_low = nome.lower()
+            try:
+                val = float(row[val_col])
+            except (ValueError, TypeError):
+                continue
+
+            if any(k in nome_low for k in ignorar_kw):
+                continue
+            elif any(k in nome_low for k in entradas_kw):
+                entradas += val
+                nomes_grafico.append(nome)
+                valores_grafico.append(val)
+                cores_grafico.append("#107c41")
+            elif any(k in nome_low for k in saidas_kw):
+                saidas += val
+                nomes_grafico.append(nome)
+                valores_grafico.append(val)
+                cores_grafico.append("#d13438")
 
     balanco = entradas - saidas
 
-    relatorio = (
-        f"RELATÓRIO EXECUTIVO DE ANÁLISE FINANCEIRA\n"
-        f"--------------------------------------------------\n"
-        f"• Total de Entradas Operacionais: R$ {entradas:,.2f}\n"
-        f"• Total de Saídas Operacionais: R$ {saidas:,.2f}\n"
-        f"• Balanço Líquido Apurado: R$ {balanco:,.2f}\n"
-        f"--------------------------------------------------\n"
-        f"Solicitação processada: {comando}\n"
-    )
-
+    # Gera o gráfico visual
     img_base64 = None
     if nomes_grafico:
         fig, ax = plt.subplots(figsize=(6, 3))
         ax.barh(nomes_grafico, valores_grafico, color=cores_grafico)
         ax.set_title("Composição Financeira (Verde: Entrada | Vermelho: Saída)")
         plt.tight_layout()
-        
         buf = io.BytesIO()
         plt.savefig(buf, format="png", dpi=150)
         buf.seek(0)
         img_base64 = base64.b64encode(buf.read()).decode("utf-8")
         plt.close(fig)
 
-    return relatorio, img_base64
+    # Resumo matemático exato calculado pelo Pandas
+    resumo_matematico = (
+        f"• Total de Entradas Operacionais: {moeda_br(entradas)}\n"
+        f"• Total de Saídas Operacionais: {moeda_br(saidas)}\n"
+        f"• Balanço Líquido Apurado: {moeda_br(balanco)}"
+    )
+
+    # Motor IA (Gemini) para responder perguntas avançadas
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        try:
+            cliente = genai.Client(api_key=api_key)
+            prompt = f"""
+            Você é um consultor financeiro executivo brasileiro.
+            Analise a planilha abaixo e os cálculos exatos já validados pelo sistema:
+            
+            PLANILHA COMPLETA:
+            {df.to_string()}
+            
+            CÁLCULOS VALIDADOS PELO SISTEMA:
+            {resumo_matematico}
+            
+            PERGUNTA / ORDEM DO USUÁRIO:
+            "{comando}"
+            
+            Responda diretamente à solicitação do usuário em português claro, profissional e sem usar asteriscos exagerados. Use valores em Reais (R$ X.XXX,XX).
+            """
+            resposta_ia = cliente.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            relatorio_final = f"{resposta_ia.text}\n\n--- RESUMO CONTÁBIL VALIDADO ---\n{resumo_matematico}"
+        except Exception as e:
+            relatorio_final = f"--- RESUMO CONTÁBIL ---\n{resumo_matematico}\n\n(Nota IA: {str(e)})"
+    else:
+        relatorio_final = f"--- RESUMO CONTÁBIL ---\n{resumo_matematico}\n\n(Configure a GEMINI_API_KEY no Render para ativar respostas avançadas de IA)."
+
+    return relatorio_final, img_base64
 
 @app.post("/api/analisar-planilha")
 async def endpoint_planilha(comando: str = Form(...), arquivo: UploadFile = File(...)):
     conteudo = await arquivo.read()
     df = pd.read_csv(io.BytesIO(conteudo)) if arquivo.filename.lower().endswith(".csv") else pd.read_excel(io.BytesIO(conteudo))
-    texto, grafico = analisar_financas(df, comando)
+    texto, grafico = analisar_hibrido(df, comando)
     return {"relatorio": texto, "grafico_base64": grafico}
