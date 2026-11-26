@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://microsoft.com"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; padding: 15px; background: #faf9f8; color: #323130; }
+        button { width: 100%; padding: 10px; margin-top: 8px; background: #0078d4; color: white; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; }
+        button:hover { background: #106ebe; }
+        textarea, input { width: 93%; padding: 8px; margin-top: 6px; border: 1px solid #8a8886; border-radius: 2px; }
+        .card { background: white; padding: 12px; border: 1px solid #edebe9; border-radius: 4px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h3>📊 Assistente Office IA</h3>
+        <input type="text" id="responsavel" placeholder="Seu Nome (Assinatura)">
+        <input type="text" id="cargo" placeholder="Seu Cargo">
+        <textarea id="comando" rows="3" placeholder="Ex: Gerar balanço financeiro..."></textarea>
+        
+        <button onclick="analisarSelecaoExcel()">1. Analisar Células Selecionadas (Excel)</button>
+        <button style="background:#107c41" onclick="inserirNoWord()">2. Inserir Relatório e Gráfico no Word</button>
+    </div>
+    <pre id="status" style="white-space: pre-wrap; font-size: 12px;"></pre>
+
+    <script>
+        const API_URL = "https://onrender.com";
+        let ultimoResultado = null;
+
+        Office.onReady(() => {
+            document.getElementById("status").innerText = "Conectado ao Microsoft Office.";
+        });
+
+        async function analisarSelecaoExcel() {
+            await Excel.run(async (context) => {
+                const range = context.workbook.getSelectedRange();
+                range.load("values");
+                await context.sync();
+
+                const linhas = range.values.map(r => ({ Categoria: r[0], Valor: Number(r[1]) }));
+                const resp = await fetch(`${API_URL}/api/analisar-dados-diretos`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        dados: linhas,
+                        comando: document.getElementById("comando").value
+                    })
+                });
+                ultimoResultado = await resp.json();
+                document.getElementById("status").innerText = ultimoResultado.relatorio;
+            });
+        }
+
+        async function inserirNoWord() {
+            if (!ultimoResultado) return alert("Analise os dados primeiro!");
+            const nome = document.getElementById("responsavel").value;
+            const cargo = document.getElementById("cargo").value;
+
+            await Word.run(async (context) => {
+                const body = context.document.body;
+                body.insertParagraph(ultimoResultado.relatorio, Word.InsertLocation.end);
+                
+                if (ultimoResultado.grafico_base64) {
+                    body.insertInlinePictureFromBase64(ultimoResultado.grafico_base64, Word.InsertLocation.end);
+                }
+
+                body.insertParagraph(`\n____________________________________\n${nome}\n${cargo}`, Word.InsertLocation.end);
+                await context.sync();
+            });
+        }
+    </script>
+</body>
+</html>
