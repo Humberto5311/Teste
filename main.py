@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from google import genai
+from openai import OpenAI
 
 app = FastAPI(title="OfficeIA Pro")
 
@@ -166,7 +166,6 @@ def analisar_hibrido(df: pd.DataFrame, comando: str):
 
     balanco = entradas - saidas
 
-    # Gera o gráfico visual
     img_base64 = None
     if nomes_grafico:
         fig, ax = plt.subplots(figsize=(6, 3))
@@ -179,18 +178,19 @@ def analisar_hibrido(df: pd.DataFrame, comando: str):
         img_base64 = base64.b64encode(buf.read()).decode("utf-8")
         plt.close(fig)
 
-    # Resumo matemático exato calculado pelo Pandas
     resumo_matematico = (
         f"• Total de Entradas Operacionais: {moeda_br(entradas)}\n"
         f"• Total de Saídas Operacionais: {moeda_br(saidas)}\n"
         f"• Balanço Líquido Apurado: {moeda_br(balanco)}"
     )
 
-    # Motor IA (Gemini) para responder perguntas avançadas
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY")
     if api_key:
         try:
-            cliente = genai.Client(api_key=api_key)
+            cliente = OpenAI(
+                base_url="https://openrouter.ai",
+                api_key=api_key,
+            )
             prompt = f"""
             Você é um consultor financeiro executivo brasileiro.
             Analise a planilha abaixo e os cálculos exatos já validados pelo sistema:
@@ -206,15 +206,16 @@ def analisar_hibrido(df: pd.DataFrame, comando: str):
             
             Responda diretamente à solicitação do usuário em português claro, profissional e sem usar asteriscos exagerados. Use valores em Reais (R$ X.XXX,XX).
             """
-            resposta_ia = cliente.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
+            chat = cliente.chat.completions.create(
+                model="meta-llama/llama-3.3-70b-instruct:free",
+                messages=[{"role": "user", "content": prompt}]
             )
-            relatorio_final = f"{resposta_ia.text}\n\n--- RESUMO CONTÁBIL VALIDADO ---\n{resumo_matematico}"
+            texto_ia = chat.choices.pop(0).message.content
+            relatorio_final = f"{texto_ia}\n\n--- RESUMO CONTÁBIL VALIDADO ---\n{resumo_matematico}"
         except Exception as e:
             relatorio_final = f"--- RESUMO CONTÁBIL ---\n{resumo_matematico}\n\n(Nota IA: {str(e)})"
     else:
-        relatorio_final = f"--- RESUMO CONTÁBIL ---\n{resumo_matematico}\n\n(Configure a GEMINI_API_KEY no Render para ativar respostas avançadas de IA)."
+        relatorio_final = f"--- RESUMO CONTÁBIL ---\n{resumo_matematico}\n\n(Configure a OPENROUTER_API_KEY no Render)."
 
     return relatorio_final, img_base64
 
